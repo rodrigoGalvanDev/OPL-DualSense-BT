@@ -18,6 +18,11 @@ ifeq ($(VMC),1)
 IOP_CFLAGS += -DVMC
 endif
 
+# Debug builds log the routing decisions (multitap / real DS2 / emulated pad), see PADEMU_LOG in pademu.c
+ifeq ($(DEBUG),1)
+IOP_CFLAGS += -DPADEMU_DEBUG
+endif
+
 IOP_CFLAGS += -DUSE_SMSUTILS
 IOP_INCS += -I../../include/
 

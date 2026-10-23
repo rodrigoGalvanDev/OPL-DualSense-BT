@@ -21,6 +21,43 @@ extern int _iop_reboot_count;
 static int imgdrv_offset_ioprpimg = 0;
 static int imgdrv_offset_ioprpsiz = 0;
 
+#ifdef PADEMU
+// The USBD module of the PS2SDK appears to ignore its module arguments (ParseOptionInput() is handed the whole
+// "dev=4" string instead of the value), so "dev=/ed=/ioreq=" never take effect and its pool stays at the
+// default ~43 KB. Patch the initialised usbConfig in the module image instead (12 ints, see usbdpriv.h).
+static int SameBytes(const unsigned char *a, const unsigned char *b, unsigned int n) // ee_core has no memcmp
+{
+    while (n--) {
+        if (*a++ != *b++)
+            return 0;
+    }
+    return 1;
+}
+
+static void PatchUsbdPool(void)
+{
+    static const int cfg_mini[12] = {16, 32, 64, 64, 256, 512, 4, 4, 0, 30, 36, 0};
+    static const int cfg_full[12] = {32, 64, 128, 128, 256, 512, 8, 8, 0, 30, 36, 0};
+    // devices, endpoints, TDs, isoTDs, io requests, static descriptor size, hubs, ports, -, thread prios, -
+    static const int cfg_new[12] = {4, 10, 12, 2, 8, 256, 2, 4, 0, 30, 36, 0};
+    void *ptr;
+    unsigned int size, i;
+    unsigned char *p;
+
+    if (GetOPLModInfo(OPL_MODULE_ID_USBD, &ptr, &size) != 0 || size < sizeof(cfg_new))
+        return;
+
+    p = (unsigned char *)ptr;
+    for (i = 0; i + sizeof(cfg_new) <= size; i++) {
+        if (SameBytes(p + i, (const unsigned char *)cfg_mini, sizeof(cfg_mini)) || SameBytes(p + i, (const unsigned char *)cfg_full, sizeof(cfg_full))) {
+            memcpy(p + i, cfg_new, sizeof(cfg_new));
+            FlushCache(0);
+            break;
+        }
+    }
+}
+#endif
+
 static void ResetIopSpecial(const char *args, unsigned int arglen)
 {
     USE_LOCAL_EECORE_CONFIG;
@@ -120,7 +157,15 @@ static void ResetIopSpecial(const char *args, unsigned int arglen)
 #define PADEMU_ARG
 #endif
     if (config->GameMode == BDM_USB_MODE PADEMU_ARG) {
-        LoadOPLModule(OPL_MODULE_ID_USBD, 0, 11, "thpri=2,3");
+        if (config->GameMode == BDM_USB_MODE) {
+            LoadOPLModule(OPL_MODULE_ID_USBD, 0, 11, "thpri=2,3");
+        } else {
+            // PADEMU only: a single BT dongle needs a tiny USBD pool (saves ~28 KB of IOP RAM; no isochronous transfers needed).
+#ifdef PADEMU
+            PatchUsbdPool();
+#endif
+            LoadOPLModule(OPL_MODULE_ID_USBD, 0, 11, "thpri=2,3");
+        }
     }
 
     LoadOPLModule(OPL_MODULE_ID_SIO2MAN, 0, 0, NULL);
@@ -197,19 +242,19 @@ int New_Reset_Iop(const char *arg, int arglen)
 
 #ifdef PADEMU
     if (iop_reboot_count >= 2 && config->EnablePadEmuOp) {
-        char args_for_pademu[8 + CORE_PADEMU_BTKEYS_LEN];
-        int args_len = 8;
+        // layout: settings (4) | macro settings (4) | Controller Setup blob (CORE_PADEMU_SETUP_LEN) | "BTK"+keys + NUL
+        char args_for_pademu[8 + CORE_PADEMU_SETUP_LEN + CORE_PADEMU_BTKEYS_LEN];
+        int args_len = 8, i = 0;
         memcpy(args_for_pademu, &config->PadEmuSettings, 4);
         memcpy(args_for_pademu + 4, &config->PadMacroSettings, 4);
-        if (config->PadEmuBtKeys[0] != '\0') { // keys of pads paired wirelessly, right after the settings
-            int i = 0;
-            while (i < CORE_PADEMU_BTKEYS_LEN - 1 && config->PadEmuBtKeys[i] != '\0') {
-                args_for_pademu[8 + i] = config->PadEmuBtKeys[i];
-                i++;
-            }
-            args_for_pademu[8 + i] = '\0';
-            args_len += i + 1;
+        memcpy(args_for_pademu + 8, config->PadEmuSetup, CORE_PADEMU_SETUP_LEN);
+        args_len += CORE_PADEMU_SETUP_LEN;
+        while (i < CORE_PADEMU_BTKEYS_LEN - 1 && config->PadEmuBtKeys[i] != '\0') { // keys of pads paired wirelessly (may be empty)
+            args_for_pademu[args_len + i] = config->PadEmuBtKeys[i];
+            i++;
         }
+        args_for_pademu[args_len + i] = '\0';
+        args_len += i + 1;
         LoadOPLModule(OPL_MODULE_ID_PADEMU, 0, args_len, args_for_pademu);
     }
 #endif

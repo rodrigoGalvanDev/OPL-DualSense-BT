@@ -142,7 +142,9 @@ jobs:
     - name: Compile -> make debug
       run: |
         make ${{ matrix.debug }} --trace
-        mv opl.elf opl-${{ matrix.debug }}-${{ env.OPL_VERSION }}-${{ env.SHORT_COMMIT }}.elf
+        # opl.elf keeps the full -g debug info (about 10 MB); OPNPS2LD.ELF is the same build stripped and packed.
+        # The log output is identical, only the symbols are gone. Upload the small one.
+        mv OPNPS2LD.ELF opl-${{ matrix.debug }}-${{ env.OPL_VERSION }}-${{ env.SHORT_COMMIT }}.elf
 
     - name: Upload variants artifact ELF
       uses: actions/upload-artifact@v4

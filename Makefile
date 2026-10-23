@@ -47,6 +47,9 @@ DEBUG ?= 0
 EESIO_DEBUG ?= 0
 INGAME_DEBUG ?= 0
 DECI2_DEBUG ?= 0
+# In-game debug builds (INGAME_DEBUG=1) keep cdvdman quiet so the PADEMU log is readable in the UDPTTY output.
+# CDVDMAN_DEBUG=1 brings back the verbose cdvdman (IOPCORE_DEBUG) in those builds.
+CDVDMAN_DEBUG ?= 0
 #How the TTY will reach developer: 'UDP', 'PPC_UART'.
 TTY_APPROACH ?= UDP
 
@@ -181,7 +184,8 @@ ifeq ($(DEBUG),1)
     EECORE_EXTRA_FLAGS += LOAD_DEBUG_MODULES=1
     CDVDMAN_DEBUG_FLAGS = IOPCORE_DEBUG=1
     MCEMU_DEBUG_FLAGS = IOPCORE_DEBUG=1
-    SMSTCPIP_INGAME_CFLAGS =
+    # Same small in-game lwIP as release builds (so the debug build has the real memory budget), plus UDP for UDPTTY.
+    SMSTCPIP_INGAME_CFLAGS = INGAME_DRIVER=1 INGAME_UDP=1
     ifeq ($(TTY_APPROACH),UDP)
       IOP_OBJS += udptty-ingame.o
     endif
@@ -191,8 +195,13 @@ ifeq ($(DEBUG),1)
   else ifeq ($(INGAME_DEBUG),1)
     EE_CFLAGS += -D__INGAME_DEBUG
     EECORE_EXTRA_FLAGS += LOAD_DEBUG_MODULES=1
-    CDVDMAN_DEBUG_FLAGS = IOPCORE_DEBUG=1
-    SMSTCPIP_INGAME_CFLAGS =
+    ifeq ($(CDVDMAN_DEBUG),1)
+      CDVDMAN_DEBUG_FLAGS = IOPCORE_DEBUG=1
+    else
+      CDVDMAN_DEBUG_FLAGS = USE_DEV9=1 #(clear IOPCORE_DEBUG) quiet cdvdman, still with dev9 for the in-game network debug output
+    endif
+    # Same small in-game lwIP as release builds (so the debug build has the real memory budget), plus UDP for UDPTTY.
+    SMSTCPIP_INGAME_CFLAGS = INGAME_DRIVER=1 INGAME_UDP=1
     ifeq ($(DECI2_DEBUG),1)
       EE_CFLAGS += -D__DECI2_DEBUG
       EECORE_EXTRA_FLAGS += DECI2_DEBUG=1
@@ -219,7 +228,8 @@ EE_CFLAGS += -Wno-format-truncation -Wno-stringop-truncation
 EE_CFLAGS += -MMD -MP
 EE_OBJS += $(FRONTEND_OBJS) $(GFX_OBJS) $(AUDIO_OBJS) $(MISC_OBJS) $(EECORE_OBJS) $(IOP_OBJS)
 EE_OBJS := $(EE_OBJS:%=$(EE_OBJS_DIR)%)
-EE_DEPS = $($(filter %.o,$(EE_OBJS)):%.o=%.d)
+# (a header change must rebuild every object that includes it: coreconfig.h / btkeys.h change struct layouts shared with ee_core)
+EE_DEPS = $(patsubst %.o,%.d,$(filter %.o,$(EE_OBJS)))
 
 # To help linking getting rid off unused functions and data
 EE_CFLAGS += -fdata-sections -ffunction-sections
@@ -529,13 +539,13 @@ $(EE_ASM_DIR)ds34usb.c: modules/ds34usb/iop/ds34usb.irx | $(EE_ASM_DIR)
 	$(BIN2C) $< $@ $(*F)_irx
 
 modules/pademu/bt_pademu.irx: modules/pademu
-	$(MAKE) -C $< USE_BT=1
+	$(MAKE) $(MOD_DEBUG_FLAGS) -C $< USE_BT=1
 
 $(EE_ASM_DIR)bt_pademu.c: modules/pademu/bt_pademu.irx
 	$(BIN2C) $< $@ $(*F)_irx
 
 modules/pademu/usb_pademu.irx: modules/pademu
-	$(MAKE) -C $< USE_USB=1
+	$(MAKE) $(MOD_DEBUG_FLAGS) -C $< USE_USB=1
 
 $(EE_ASM_DIR)usb_pademu.c: modules/pademu/usb_pademu.irx
 	$(BIN2C) $< $@ $(*F)_irx
