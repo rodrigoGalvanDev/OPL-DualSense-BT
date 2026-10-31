@@ -82,8 +82,8 @@ Honestly, it's only been tested on a couple of setups so far. Everything else co
 |---|---|
 | Console | PS2 Slim SCPH-90001 (Matrix modchip) |
 | Dongle | Realtek, USB ID `0BDA:8771` |
-| Controller | DualSense (wireless pairing, USB pairing, menu and in-game) |
-| Mixed | DualSense on 1P via Bluetooth + wired DualShock 2 on 2P |
+| Controller | DualSense, DualShock 4 |
+| Mixed | Dualsense and multiple Dualshock 4 |
 
 ### Should work
 
