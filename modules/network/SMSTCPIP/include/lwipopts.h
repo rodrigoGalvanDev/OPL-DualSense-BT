@@ -31,7 +31,9 @@
 a lot of data that needs to be copied, this should be set high. */
 /* Setting this too low may cause tcp_write() to fail when it tries to allocate from PBUF_RAM!
    Up to TCP_SND_BUF * 2 segments may be transmitted at once, thanks to Nagle and Delayed Ack. */
-#ifdef INGAME_DRIVER
+#if defined(INGAME_DRIVER) && defined(INGAME_UDP)
+#define MEM_SIZE 0x1000 // debug: every TTY line is a UDP packet allocated from this heap
+#elif defined(INGAME_DRIVER)
 #define MEM_SIZE 0x400
 #else
 #define MEM_SIZE (TCP_SND_BUF * 2)
@@ -75,20 +77,30 @@ a lot of data that needs to be copied, this should be set high. */
 
 /* MEMP_NUM_NETCONN: the number of struct netconns. */
 #ifdef INGAME_DRIVER
+#ifdef INGAME_UDP
+#define MEMP_NUM_NETCONN 2 // SMB (TCP) + the in-game UDPTTY debug socket
+#else
 #define MEMP_NUM_NETCONN 1
+#endif
 #endif
 
 /* MEMP_NUM_APIMSG: the number of struct api_msg, used for
    communication between the TCP/IP stack and the sequential
    programs. */
 #ifdef INGAME_DRIVER
+#ifdef INGAME_UDP
+#define MEMP_NUM_API_MSG 10 // debug: UDPTTY sends from several threads at once
+#else
 #define MEMP_NUM_API_MSG 5
+#endif
 #endif
 
 /* MEMP_NUM_TCPIPMSG: the number of struct tcpip_msg, which is used
    for sequential API communication and incoming packets. Used in
    src/api/tcpip.c. */
-#ifdef INGAME_DRIVER
+#if defined(INGAME_DRIVER) && defined(INGAME_UDP)
+#define MEMP_NUM_TCPIP_MSG 40
+#elif defined(INGAME_DRIVER)
 #define MEMP_NUM_TCPIP_MSG 15
 #else
 #define MEMP_NUM_TCPIP_MSG 40
@@ -181,8 +193,15 @@ a lot of data that needs to be copied, this should be set high. */
 
 /* IP reassembly and segmentation. These are orthogonal even
    if they both deal with IP fragments */
+/* In-game: TCP over a 1500 byte MTU never fragments, and the reassembly (5.8 KB) and fragmentation (1.5 KB)
+   static buffers are IOP RAM taken from the game. */
+#ifdef INGAME_DRIVER
+#define IP_REASSEMBLY 0
+#define IP_FRAG       0
+#else
 #define IP_REASSEMBLY 1
 #define IP_FRAG       1
+#endif
 
 /* ---------- ICMP options ---------- */
 #define ICMP_TTL 255
@@ -210,7 +229,7 @@ a lot of data that needs to be copied, this should be set high. */
 #endif
 
 /* ---------- UDP options ---------- */
-#ifdef INGAME_DRIVER
+#if defined(INGAME_DRIVER) && !defined(INGAME_UDP)
 #define LWIP_UDP 0
 #else
 #define LWIP_UDP 1

@@ -20,6 +20,12 @@ ifeq ($(INGAME_DRIVER),1)
 IOP_CFLAGS += -DINGAME_DRIVER
 endif
 
+#Enable UDP in the in-game stack (needed by the in-game UDPTTY debug module).
+INGAME_UDP ?= 0
+ifeq ($(INGAME_UDP),1)
+IOP_CFLAGS += -DINGAME_UDP
+endif
+
 ifeq ($(INTERRUPT_CTX_INPKT),1)
 IOP_CFLAGS += -DINTERRUPT_CTX_INPKT
 endif

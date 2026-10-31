@@ -64,6 +64,7 @@ enum CONFIG_INDEX {
 #define CONFIG_ITEM_ENABLEPADEMU     "$EnablePadEmu"
 #define CONFIG_ITEM_PADEMUSETTINGS   "$PadEmuSettings"
 #define CONFIG_ITEM_PADEMU_BTKEYS    "pademu_bt_keys" // link keys of pads paired wirelessly (conf_opl.cfg)
+#define CONFIG_ITEM_PADEMU_SETUP     "pademu_setup"   // Controller Setup blob as hex (include/padsetup.h, conf_opl.cfg)
 #define CONFIG_ITEM_PADMACROSETTINGS "$PadMacroSettings"
 #define CONFIG_ITEM_PADMACROSOURCE   "$PadMacroSource"
 

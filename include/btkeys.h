@@ -7,12 +7,15 @@
  * in-game driver (bt_pademu.irx).
  *
  * Text form (OPL config value and in-game module argument): one entry per pad,
- * 44 hex characters each = 6 bytes BD_ADDR (HCI byte order) + 16 bytes link key.
+ * 46 hex characters each = 6 bytes BD_ADDR (HCI byte order) + 16 bytes link key + 1 byte lightbar colour
+ * (index of the padsetup.h palette, 0 = not chosen). The colour therefore travels with the pairing of that very pad,
+ * whatever slot it ends up in. Older configs have 44-character entries (no colour): told apart by the total length.
  * The in-game module argument prefixes the list with BTKEYS_ARG_TAG.
  */
 
 #define BTKEYS_MAX       4
-#define BTKEYS_ENTRY_HEX 44
+#define BTKEYS_ENTRY_HEX 46
+#define BTKEYS_ENTRY_HEX_OLD 44
 #define BTKEYS_HEX_LEN   (BTKEYS_MAX * BTKEYS_ENTRY_HEX)
 #define BTKEYS_ARG_TAG   "BTK"
 #define BTKEYS_ARG_LEN   (3 + BTKEYS_HEX_LEN + 1)
@@ -21,6 +24,7 @@ typedef struct
 {
     u8 bdaddr[6];
     u8 key[16];
+    u8 led; // lightbar colour index of this pad (padsetup.h palette), 0 = none chosen
 } bt_link_key_t;
 
 static inline int btkeys_hexval(char c)
@@ -34,14 +38,19 @@ static inline int btkeys_hexval(char c)
     return -1;
 }
 
-// Parses consecutive 44-character entries. Stops at the first incomplete or invalid one.
+// Parses consecutive entries (46 characters, or 44 in configs saved before the colour existed). Stops at the first
+// incomplete or invalid one.
 static inline int btkeys_parse(const char *s, bt_link_key_t *keys, int max)
 {
-    int n = 0, i, hi, lo;
-    u8 raw[22];
+    int n = 0, i, hi, lo, len = 0, nb;
+    u8 raw[23];
+
+    while (s[len])
+        len++;
+    nb = (len > 0 && (len % BTKEYS_ENTRY_HEX) == 0) ? 23 : 22; // 4 entries: 184 (new) or 176 (old) characters, never both
 
     while (n < max) {
-        for (i = 0; i < 22; i++) {
+        for (i = 0; i < nb; i++) {
             hi = btkeys_hexval(s[2 * i]);
             if (hi < 0)
                 return n;
@@ -54,14 +63,15 @@ static inline int btkeys_parse(const char *s, bt_link_key_t *keys, int max)
             keys[n].bdaddr[i] = raw[i];
         for (i = 0; i < 16; i++)
             keys[n].key[i] = raw[6 + i];
-        s += BTKEYS_ENTRY_HEX;
+        keys[n].led = (nb == 23 && raw[22] < 16) ? raw[22] : 0;
+        s += nb * 2;
         n++;
     }
 
     return n;
 }
 
-// Writes count entries as hex plus a terminating NUL. out needs count * 44 + 1 bytes.
+// Writes count entries as hex plus a terminating NUL. out needs count * 46 + 1 bytes.
 static inline void btkeys_format(const bt_link_key_t *keys, int count, char *out)
 {
     static const char hex[] = "0123456789ABCDEF";
@@ -79,6 +89,8 @@ static inline void btkeys_format(const bt_link_key_t *keys, int count, char *out
             *out++ = hex[p[i] >> 4];
             *out++ = hex[p[i] & 0x0F];
         }
+        *out++ = hex[(keys[n].led >> 4) & 0x0F];
+        *out++ = hex[keys[n].led & 0x0F];
     }
     *out = '\0';
 }
@@ -117,17 +129,27 @@ static inline int btkeys_store(bt_link_key_t *keys, int count, const u8 *bdaddr,
                     keys[n - 1].bdaddr[i] = keys[n].bdaddr[i];
                 for (i = 0; i < 16; i++)
                     keys[n - 1].key[i] = keys[n].key[i];
+                keys[n - 1].led = keys[n].led;
             }
             count--;
         }
         n = count++;
         for (i = 0; i < 6; i++)
             keys[n].bdaddr[i] = bdaddr[i];
+        keys[n].led = 0;
     }
     for (i = 0; i < 16; i++)
         keys[n].key[i] = key[i];
 
     return count;
+}
+
+// Lightbar colour (palette index) saved for the pad bdaddr, 0 when the pad is unknown or has none.
+static inline int btkeys_get_led(const bt_link_key_t *keys, int count, const u8 *bdaddr)
+{
+    int n = btkeys_find(keys, count, bdaddr);
+
+    return n >= 0 ? keys[n].led : 0;
 }
 
 #endif

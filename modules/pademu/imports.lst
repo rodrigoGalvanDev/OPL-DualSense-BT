@@ -15,6 +15,7 @@ thsemap_IMPORTS_end
 
 thbase_IMPORTS_start
 I_DelayThread
+I_GetSystemTime
 I_SetAlarm
 I_CancelAlarm
 thbase_IMPORTS_end
@@ -33,6 +34,12 @@ I_sceUsbdTransferPipe
 I_sceUsbdRegisterLdd
 usbd_IMPORTS_end
 
+#ifdef PADEMU_DEBUG
+stdio_IMPORTS_start
+I_printf
+stdio_IMPORTS_end
+
+#endif
 sysclib_IMPORTS_start
 I_memcmp
 #ifndef USE_SMSUTILS

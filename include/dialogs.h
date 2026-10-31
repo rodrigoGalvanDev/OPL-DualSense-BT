@@ -95,6 +95,7 @@ enum UI_ITEMS {
     NETCFG_SHARE_IP_ADDR_DOT_2,
     NETCFG_SHARE_PORT,
     NETCFG_SHARE_NAME,
+    NETCFG_SHARE_BROWSE,
     NETCFG_SHARE_USERNAME,
     NETCFG_SHARE_PASSWORD,
     NETCFG_ETHOPMODE,
@@ -155,9 +156,17 @@ enum UI_ITEMS {
     PADCFG_PADEMU_CONFIG,
     PADCFG_PADEMU_ENABLE,
     PADCFG_PADEMU_MODE,
-    PADCFG_PADEMU_PORT,
-    PADCFG_PADEMU_VIB,
-    PADCFG_PADPORT,
+    // slot table: one row per port (1P, 2P) or multitap slot (A to D); label, "Emulation" text + switch, "Vibration" text + switch
+    PADCFG_SLOT_LABEL0,
+    PADCFG_SLOT_LABEL1,
+    PADCFG_SLOT_LABEL2,
+    PADCFG_SLOT_LABEL3,
+    PADCFG_SLOT_EMU0,
+    PADCFG_SLOT_EMU1,
+    PADCFG_SLOT_EMU2,
+    PADCFG_SLOT_EMU3,
+    PADCFG_PORT_OTHER_LABEL, // the physical port that is not the emulated multitap: always the real controller
+    PADCFG_PORT_OTHER_VALUE,
     PADCFG_USBDG_MAC,
     PADCFG_USBDG_MAC_STR,
     PADCFG_PAD_MAC,
@@ -186,6 +195,42 @@ enum UI_ITEMS {
     PADCFG_BTS_DEV2,
     PADCFG_BTS_DEV3,
     PADCFG_BTS_AGAIN,
+    PADCFG_BTS_DBG0,
+    PADCFG_BTS_DBG1,
+    PADCFG_BTS_DBG2,
+    PADCFG_BTS_DBG3,
+    PADCFG_SETUP,
+    PADCFG_SETUP_STR,
+    PADCFG_BT_OPEN_STR,
+    PADCFG_BT_OPEN, // opens the Bluetooth pads dialog
+    PADCFG_BTP_LABEL0, // Bluetooth pads dialog: one row per pad slot (name + battery) ...
+    PADCFG_BTP_LABEL1,
+    PADCFG_BTP_LABEL2,
+    PADCFG_BTP_LABEL3,
+    PADCFG_BTP_DISC0, // ... and its Disconnect button
+    PADCFG_BTP_DISC1,
+    PADCFG_BTP_DISC2,
+    PADCFG_BTP_DISC3,
+    PADCFG_BTP_NONE, // "no pad connected" line
+    PADSET_TOUCH_MODE,
+    PADSET_TOUCH_SENS,
+    PADSET_TOUCH_CLICK,
+    PADSET_PS_TAP,
+    PADSET_PS_HOLD,
+    PADSET_PS_TIME,
+    PADSET_LED0, // lightbar colour of slots 1 to 4
+    PADSET_LED1,
+    PADSET_LED2,
+    PADSET_LED3,
+    PADSET_LEDCOL0, // colour picker of slots 1 to 4, shown only when the slot is set to Custom
+    PADSET_LEDCOL1,
+    PADSET_LEDCOL2,
+    PADSET_LEDCOL3,
+    PADSET_REMAP,
+    PADSET_RESET,
+    PADREM_BASE, // 16 rows: one per DS2 button
+    PADREM_END = PADREM_BASE + 15,
+    PADREM_RESET,
 
     PADMACRO_GLOBAL_BUTTON,
     PADMACRO_CFG_SOURCE,
@@ -218,6 +263,9 @@ extern struct UIItem diaPadEmuConfig[];
 extern struct UIItem diaPadMacroConfig[];
 extern struct UIItem diaPadEmuInfo[];
 extern struct UIItem diaPadEmuBtSearch[];
+extern struct UIItem diaPadEmuBtPads[];
+extern struct UIItem diaPadEmuSetup[];
+extern struct UIItem diaPadEmuRemap[];
 #endif
 
 extern struct UIItem diaNetConfig[];

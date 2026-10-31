@@ -1,0 +1,95 @@
+name: Release-BT
+
+# Builds OPL with PADEMU + Bluetooth and creates a GitHub release.
+#  - push a tag like  bt-v1.0.0  (or bt-v1.0.0-rc1)
+#  - or run it by hand (Actions > Release-BT > Run workflow) and give the tag name
+#
+# The release description starts as a copy of the notes of the previous BT release (tag bt-v*).
+# By default the release is created as a DRAFT: open it on the Releases page, edit the notes, then Publish.
+# (If there is no previous BT release, the notes start as a TODO placeholder: write them on the draft.)
+
+on:
+  push:
+    tags:
+      - 'bt-v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. bt-v1.0.0)'
+        required: true
+      prerelease:
+        description: 'Mark as pre-release'
+        type: boolean
+        default: true
+      draft:
+        description: 'Create as draft (lets you edit the release notes before publishing)'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    container: ghcr.io/ps2homebrew/ps2homebrew:main
+    steps:
+    - name: git checkout
+      uses: actions/checkout@v4
+
+    - run: |
+        git config --global --add safe.directory "$GITHUB_WORKSPACE"
+        git fetch --prune --unshallow
+
+    - name: Get version and tag
+      run: |
+        echo "OPL_VERSION=$(make oplversion)" >> $GITHUB_ENV
+        if [ -n "${{ github.event.inputs.tag }}" ]; then TAG="${{ github.event.inputs.tag }}"; else TAG="${GITHUB_REF_NAME}"; fi
+        echo "TAG=$TAG" >> $GITHUB_ENV
+
+    - name: Compile -> make clean release
+      run: make --trace clean release
+
+    - name: Name the ELF
+      run: |
+        ELF=$(ls OPNPS2LD-*.ELF | head -n 1)
+        cp "$ELF" "OPL-DualSense-BT-${TAG}.ELF"
+
+    # Starting text for the notes = body of the previous BT release (its old "Build:" footer is dropped).
+    # Starts as a TODO placeholder when there is no previous BT release.
+    - name: Release notes (copy of the previous release)
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+          const { owner, repo } = context.repo;
+          const tag = process.env.TAG;
+
+          const releases = await github.paginate(github.rest.repos.listReleases, { owner, repo, per_page: 100 });
+          const prev = releases
+            .filter(r => !r.draft && r.tag_name !== tag && r.tag_name.startsWith('bt-v'))
+            .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))[0];
+
+          let body;
+          if (prev && prev.body && prev.body.trim()) {
+            core.info(`Copying the notes of ${prev.tag_name}`);
+            body = prev.body.replace(/\r\n/g, '\n').replace(/\n+---\nBuild: [^\n]*\s*$/, '').trimEnd();
+          } else {
+            core.info('No previous BT release, starting with a placeholder');
+            body = 'Release notes: TODO';
+          }
+
+          const footer = `\n\n---\nBuild: \`${process.env.OPL_VERSION}\` / commit \`${context.sha.slice(0, 8)}\`\n`;
+          fs.writeFileSync('notes.md', body + footer);
+
+    - name: Publish release
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: ${{ env.TAG }}
+        target_commitish: ${{ github.sha }}
+        name: OPL DualSense/DS4 BT ${{ env.TAG }}
+        body_path: notes.md
+        draft: ${{ github.event.inputs.draft != 'false' }}
+        prerelease: ${{ github.event.inputs.prerelease == 'true' || contains(env.TAG, '-rc') }}
+        files: |
+          OPL-DualSense-BT-${{ env.TAG }}.ELF

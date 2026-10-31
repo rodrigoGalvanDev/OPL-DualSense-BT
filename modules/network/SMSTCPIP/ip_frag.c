@@ -52,6 +52,7 @@
 
 #include "smsutils.h"
 
+#if IP_REASSEMBLY || IP_FRAG
 /*
  * Copy len bytes from offset in pbuf to buffer
  *
@@ -78,6 +79,9 @@ static struct pbuf *copy_from_pbuf(
     return p;
 
 } /* end copy_from_pbuf */
+#endif /* IP_REASSEMBLY || IP_FRAG */
+
+#if IP_REASSEMBLY
 
 #define IP_REASS_BUFSIZE 5760
 #define IP_REASS_MAXAGE  30
@@ -246,6 +250,9 @@ nullreturn:
     return NULL;
 }
 
+#endif /* IP_REASSEMBLY */
+
+#if IP_FRAG
 #define MAX_MTU 1500
 static u8_t buf[MEM_ALIGN_SIZE(MAX_MTU)];
 
@@ -324,3 +331,4 @@ err_t ip_frag(struct pbuf *p, struct netif *netif, struct ip_addr *dest)
     pbuf_free(rambuf);
     return ERR_OK;
 }
+#endif /* IP_FRAG */

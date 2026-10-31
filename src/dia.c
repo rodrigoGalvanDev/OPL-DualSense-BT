@@ -264,6 +264,15 @@ int diaShowKeyb(char *text, int maxLen, int hide_text, const char *title)
 
 static int colPadSettings[16];
 
+// Optional live preview of the colour being edited (called every frame of the selector with the id of the item)
+static void (*diaColPreviewFn)(int id, const unsigned char *rgb) = NULL;
+static int diaColPreviewId = 0;
+
+void diaSetColourPreview(void (*fn)(int id, const unsigned char *rgb))
+{
+    diaColPreviewFn = fn;
+}
+
 static int diaShowColSel(unsigned char *r, unsigned char *g, unsigned char *b)
 {
     int selc = 0;
@@ -322,6 +331,9 @@ static int diaShowColSel(unsigned char *r, unsigned char *g, unsigned char *b)
         guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_CANCEL, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
 
         rmEndFrame();
+
+        if (diaColPreviewFn)
+            diaColPreviewFn(diaColPreviewId, col);
 
         if (getKey(KEY_LEFT)) {
             if (col[selc] > 0) {
@@ -717,6 +729,7 @@ static int diaHandleInput(struct UIItem *item, int *modified)
         }
 
     } else if (item->type == UI_COLOUR) {
+        diaColPreviewId = item->id;
         if (!diaShowColSel(&item->colourvalue.r, &item->colourvalue.g, &item->colourvalue.b))
             *modified = 0;
 
