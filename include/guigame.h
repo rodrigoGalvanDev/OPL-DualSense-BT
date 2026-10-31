@@ -23,6 +23,18 @@ void guiGameBtKeysPushToDriver(void);
 void guiGameBtKeysRequestPush(void);
 void guiGameBtKeysPushIfPending(void);
 void guiGameBtKeysModuleArg(char *out); // needs BTKEYS_ARG_LEN bytes
+void guiGameSetupModuleArg(unsigned char *out); // Controller Setup blob, PADSETUP_ARG_LEN bytes
+// Controller Setup (PADEMU), table driven by padsetup_params[] in include/padsetup.h
+int guiGameSetupGet(int param);                  // PADSETUP_P_*; a stored value out of range reads as the default
+int guiGameSetupSet(int param, int value);       // 1 = stored, 0 = out of range (unchanged)
+int guiGameSetupGetRemap(int button);            // button 0..15 (DS2 bit number); UI index: 0 unchanged, 1 disabled, 2.. target
+void guiGameSetupSetRemap(int button, int index);
+void guiGameSetupResetDefaults(void);
+void guiGameSetupCommit(void);                   // save to the OPL config + apply what the menu driver can use right away
+void guiGameBtLedApply(int slot);               // send the lightbar colour of the slot to the menu driver
+void guiGameBtLedOnConnect(int slot);           // a pad connected to the menu driver: find which saved pad it is, apply its colour if one was chosen
+void guiGameBtLedOnDisconnect(int slot);        // the pad of the slot is gone
+int guiGameBtLedGet(int slot, unsigned char *rgb); // colour chosen for the slot, 0 = default
 #endif
 
 void guiGameShowOSDLanguageConfig(int forceGlobal);

@@ -92,6 +92,7 @@ int diaSetInt(struct UIItem *ui, int id, int value);
 int diaGetString(struct UIItem *ui, int id, char *value, int length);
 int diaSetString(struct UIItem *ui, int id, const char *text);
 int diaGetColor(struct UIItem *ui, int id, unsigned char *col);
+void diaSetColourPreview(void (*fn)(int id, const unsigned char *rgb)); // live preview while the colour selector is open (NULL = off)
 int diaSetColor(struct UIItem *ui, int id, const unsigned char *col);
 int diaSetU64Color(struct UIItem *ui, int id, u64 col);
 // set label pointer into the label's text (must be valid while rendering dialog)

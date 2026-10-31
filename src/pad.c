@@ -344,6 +344,24 @@ int readPads()
         rslt |= readPad(&pad_data[i]);
     }
 
+#ifdef PADEMU
+    // Bluetooth pads 3 and 4 have no physical port behind them: they only drive the menu
+    for (i = 2; i < DS34BT_PADS_MAX; ++i) {
+        u8 btdata[18];
+
+        if (ds34bt_cached_info(i)->connected && (ds34bt_get_status(i) & DS34BT_STATE_RUNNING)) {
+            if (ds34bt_get_data(i, btdata)) {
+                u32 pressed = 0xffff ^ (btdata[0] | (btdata[1] << 8));
+
+                paddata |= pressed;
+                if (pressed)
+                    rslt = 1;
+            }
+            ds34bt_set_rumble(i, 0, 0);
+        }
+    }
+#endif
+
     for (i = 0; i < 16; ++i) {
         if (getKeyPressed(i + 1))
             delaycnt[i] -= time_since_last;

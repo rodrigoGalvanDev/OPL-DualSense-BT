@@ -24,6 +24,10 @@
 #include "include/sound.h"
 #include "include/guigame.h"
 
+#ifdef PADEMU
+#include <libds34bt.h>
+#endif
+
 #include <limits.h>
 #include <stdlib.h>
 #include <libvux.h>
@@ -760,6 +764,158 @@ static int netConfigUpdater(int modified)
     return 0;
 }
 
+// Folder icon drawn with rectangles (no texture needed)
+static void guiDrawFolderIcon(int x, int y, u64 colour)
+{
+    rmDrawRect(x, y, 14, 5, colour);       // tab
+    rmDrawRect(x, y + 4, 28, 18, colour);  // body
+}
+
+// Lists the shares of the connected server and lets the user pick one. Returns 1 and fills out when one is selected.
+#define NETSHARE_MAX  32
+#define NETSHARE_ROWS 9
+static int guiSelectShare(char names[][32], int count, char *out, size_t outSize)
+{
+    int sel = 0, top = 0, result = 0, i;
+
+    sfxPlay(SFX_MESSAGE);
+
+    while (!result) {
+        guiStartFrame();
+        readPads();
+
+        if (getKeyOn(gSelectButton == KEY_CIRCLE ? KEY_CROSS : KEY_CIRCLE)) {
+            result = -1;
+        } else if (getKeyOn(gSelectButton)) {
+            result = 1;
+        } else if (getKey(KEY_UP)) {
+            if (sel > 0)
+                sel--;
+        } else if (getKey(KEY_DOWN)) {
+            if (sel < count - 1)
+                sel++;
+        }
+
+        if (sel < top)
+            top = sel;
+        if (sel >= top + NETSHARE_ROWS)
+            top = sel - NETSHARE_ROWS + 1;
+
+        guiShow();
+        rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+        rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
+        rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+        fntRenderString(gTheme->fonts[0], 50, 50, ALIGN_NONE, 0, 0, "Network shares", gTheme->textColor);
+
+        for (i = 0; i < NETSHARE_ROWS && top + i < count; i++) {
+            int y = 85 + i * 34;
+            int on = (top + i == sel);
+
+            if (on)
+                rmDrawRect(60, y - 2, screenWidth - 120, 30, GS_SETREG_RGBA(0x40, 0x40, 0x40, 0x60));
+            guiDrawFolderIcon(70, y + 2, on ? GS_SETREG_RGBA(0xFF, 0xD0, 0x40, 0x80) : GS_SETREG_RGBA(0xC0, 0xA0, 0x30, 0x70));
+            fntRenderString(gTheme->fonts[0], 115, y + 2, ALIGN_NONE, 0, 0, names[top + i], on ? gTheme->selTextColor : gTheme->textColor);
+        }
+
+        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CIRCLE_ICON : CROSS_ICON, _STR_ACCEPT, gTheme->fonts[0], 70, 417, gTheme->selTextColor);
+        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
+        guiEndFrame();
+    }
+
+    sfxPlay(result == 1 ? SFX_CONFIRM : SFX_CANCEL);
+    if (result != 1)
+        return 0;
+
+    snprintf(out, outSize, "%s", names[sel]);
+    return 1;
+}
+
+// Message box for Network Config. guiMsgBox draws one unwrapped line (fntRenderString ignores '\n' without a width),
+// so the long texts of the Browse button ran off both sides of the screen. Here the text is wrapped and drawn line by line.
+static void guiNetNotice(const char *text)
+{
+    char buf[320];
+    char *line, *next;
+    int lines = 1, terminate = 0, y0, i;
+    const int lineH = 24;
+
+    snprintf(buf, sizeof(buf), "%s", text);
+    fntFitString(gTheme->fonts[0], buf, screenWidth - 160);
+    for (line = buf; *line; line++)
+        if (*line == '\n')
+            lines++;
+
+    sfxPlay(SFX_MESSAGE);
+
+    while (!terminate) {
+        guiStartFrame();
+        readPads();
+
+        if (getKeyOn(KEY_CIRCLE) || getKeyOn(KEY_CROSS))
+            terminate = 1;
+
+        diaRenderUI(diaNetConfig, screenHandler->inMenu, NULL, 0);
+        rmDrawRect(0, 0, screenWidth, screenHeight, gColDarker);
+        rmDrawLine(50, 75, screenWidth - 50, 75, gColWhite);
+        rmDrawLine(50, 410, screenWidth - 50, 410, gColWhite);
+
+        y0 = (gTheme->usedHeight >> 1) - ((lines - 1) * lineH >> 1);
+        for (i = 0, line = buf; line && *line; i++, line = next) {
+            next = strchr(line, '\n');
+            if (next)
+                *next++ = '\0';
+            fntRenderString(gTheme->fonts[0], screenWidth >> 1, y0 + i * lineH, ALIGN_CENTER, 0, 0, line, gTheme->textColor);
+            // keep buf intact for the next frame
+            if (next)
+                *(next - 1) = '\n';
+        }
+
+        guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? CROSS_ICON : CIRCLE_ICON, _STR_BACK, gTheme->fonts[0], 500, 417, gTheme->selTextColor);
+        guiEndFrame();
+    }
+
+    sfxPlay(SFX_CANCEL);
+}
+
+// Why there is no SMB session to ask for the share list. The text follows the state of the last connection attempt.
+static const char *guiNetNoSessionText(void)
+{
+    switch (gNetworkStartup) {
+        case ERROR_ETH_SMB_CONN:
+            return "Could not reach the server. Check the address and port, and that SMB 1.0 is enabled on the server. Then press Reconnect.";
+        case ERROR_ETH_SMB_LOGON:
+            return "The server refused the login. Check user and password, and that SMB 1.0 is enabled on the server. Then press Reconnect.";
+        case ERROR_ETH_SMB_ECHO:
+            return "The server stopped answering. Press Reconnect and try again.";
+        default:
+            return "The network is not up yet. Press Reconnect (or OK) and open Browse shares again.";
+    }
+}
+
+// "Browse shares" button of Network Config: asks the connected server for its shares and puts the chosen one in the share name field.
+static void guiNetBrowseShares(void)
+{
+    char (*names)[32] = (char(*)[32])malloc(NETSHARE_MAX * 32);
+    char picked[32], msg[200];
+    int count, err = 0;
+
+    if (!names)
+        return;
+
+    count = ethGetShareNames(names, NETSHARE_MAX, &err);
+    if (count == -2) {
+        snprintf(msg, sizeof(msg), "The server did not give the list of shares (error %d). Windows usually lists shares only for a real user account, not for guest. Type the share name by hand.", err);
+        guiNetNotice(msg);
+    } else if (count < 0)
+        guiNetNotice(guiNetNoSessionText());
+    else if (count == 0)
+        guiNetNotice("The server did not list any shares.");
+    else if (guiSelectShare(names, count, picked, sizeof(picked)))
+        diaSetString(diaNetConfig, NETCFG_SHARE_NAME, picked);
+
+    free(names);
+}
+
 void guiShowNetConfig(void)
 {
     size_t i;
@@ -816,7 +972,16 @@ void guiShowNetConfig(void)
         diaSetVisible(diaNetConfig, NETCFG_RECONNECT, 0);
     }
 
-    int result = diaExecuteDialog(diaNetConfig, -1, 1, &netConfigUpdater);
+    int result, focus = -1;
+
+    for (;;) {
+        result = diaExecuteDialog(diaNetConfig, focus, 1, &netConfigUpdater);
+        if (result != NETCFG_SHARE_BROWSE)
+            break;
+        guiNetBrowseShares();
+        focus = NETCFG_SHARE_BROWSE;
+    }
+
     if (result) {
         // Store values
         diaGetInt(diaNetConfig, NETCFG_PS2_IP_ADDR_TYPE, &ps2_ip_use_dhcp);
@@ -1394,6 +1559,162 @@ void guiDrawSubMenuHints(void)
     guiDrawIconAndText(gSelectButton == KEY_CIRCLE ? subMenuIcons[1] : subMenuIcons[0], subMenuHints[1], gTheme->fonts[0], x, y, gTheme->textColor);
 }
 
+#ifdef PADEMU
+/*
+ * Bluetooth pads indicator (top right): one card per connected pad with the slot colour (same colours the
+ * lightbar uses), type, a 5 segment battery, the percentage and a bolt while charging.
+ * One RPC for all the ports about once a second from the main thread, never every frame.
+ */
+#define BTHUD_REFRESH_FRAMES 60
+#define BTHUD_MARGIN         10
+#define BTHUD_CARD_W         146
+#define BTHUD_CARD_H         22
+#define BTHUD_CARD_GAP       4
+#define BTHUD_SEGMENTS       5
+#define BTHUD_SEG_W          5
+#define BTHUD_SEG_GAP        1
+#define BTHUD_BAT_W          (BTHUD_SEGMENTS * BTHUD_SEG_W + (BTHUD_SEGMENTS - 1) * BTHUD_SEG_GAP + 4)
+#define BTHUD_BAT_H          10
+
+static int btHudLastPoll = -BTHUD_REFRESH_FRAMES;
+
+static void guiBtHudPoll(void)
+{
+    static u8 wasConnected[DS34BT_PADS_MAX];
+    int i;
+
+    if (guiFrameId - btHudLastPoll < BTHUD_REFRESH_FRAMES && guiFrameId >= btHudLastPoll)
+        return;
+
+    btHudLastPoll = guiFrameId;
+    ds34bt_update_info(); // one RPC for all the ports
+
+    // a pad that just connected gets the lightbar colour chosen for its slot
+    for (i = 0; i < DS34BT_PADS_MAX; i++) {
+        u8 now = ds34bt_cached_info(i)->connected;
+
+        if (now && !wasConnected[i])
+            guiGameBtLedOnConnect(i);
+        else if (!now && wasConnected[i])
+            guiGameBtLedOnDisconnect(i);
+        wasConnected[i] = now;
+    }
+}
+
+static void guiBtHudBolt(int x, int y, u64 color)
+{
+    rmDrawRect(x + 3, y + 0, 4, 2, color);
+    rmDrawRect(x + 2, y + 2, 4, 2, color);
+    rmDrawRect(x + 0, y + 4, 7, 2, color);
+    rmDrawRect(x + 2, y + 6, 4, 2, color);
+    rmDrawRect(x + 1, y + 8, 3, 2, color);
+}
+
+static void guiBtHudCheck(int x, int y, u64 color)
+{
+    rmDrawRect(x + 0, y + 5, 2, 2, color);
+    rmDrawRect(x + 2, y + 7, 2, 2, color);
+    rmDrawRect(x + 4, y + 5, 2, 2, color);
+    rmDrawRect(x + 6, y + 3, 2, 2, color);
+    rmDrawRect(x + 8, y + 1, 2, 2, color);
+}
+
+static void guiDrawBtPads(void)
+{
+    static const char *const typeNames[] = {"", "DS3", "DS4", "DS5"};
+    static const u64 slotColors[DS34BT_PADS_MAX] = {
+        GS_SETREG_RGBA(0x30, 0x60, 0xFF, 0x80), // 1 blue
+        GS_SETREG_RGBA(0x30, 0xC0, 0x40, 0x80), // 2 green
+        GS_SETREG_RGBA(0xE0, 0xC0, 0x20, 0x80), // 3 yellow
+        GS_SETREG_RGBA(0x30, 0xC0, 0xC0, 0x80), // 4 cyan
+    };
+    const u64 frameColor = GS_SETREG_RGBA(0xD0, 0xD0, 0xD8, 0x80);
+    const u64 emptyColor = GS_SETREG_RGBA(0x40, 0x40, 0x48, 0x70);
+    int i, row = 0;
+
+    guiBtHudPoll();
+
+    for (i = 0; i < DS34BT_PADS_MAX; i++) {
+        const ds34bt_info_t *info = ds34bt_cached_info(i);
+        char text[16];
+        u8 ledRgb[3];
+        int x0, y0, bx, by, s, lit, known, charging, full, low;
+        u64 color;
+
+        if (!info->connected)
+            continue;
+
+        known = info->percent != DS34BT_BAT_PCT_UNKNOWN;
+        charging = info->state == DS34BT_BAT_CHARGING;
+        full = info->state == DS34BT_BAT_FULL;
+        low = known && !charging && !full && info->percent <= 15;
+
+        x0 = screenWidth - BTHUD_MARGIN - BTHUD_CARD_W;
+        y0 = BTHUD_MARGIN + row * (BTHUD_CARD_H + BTHUD_CARD_GAP);
+
+        // card: dark background (it pulses red on a low battery) and the slot colour on the left edge
+        if (low && ((guiFrameId >> 5) & 1))
+            rmDrawRect(x0, y0, BTHUD_CARD_W, BTHUD_CARD_H, GS_SETREG_RGBA(0x60, 0x10, 0x10, 0x70));
+        else
+            rmDrawRect(x0, y0, BTHUD_CARD_W, BTHUD_CARD_H, GS_SETREG_RGBA(0x10, 0x10, 0x18, 0x60));
+        if (guiGameBtLedGet(i, ledRgb)) { // colour chosen for the slot (black = Off: show it gray)
+            if (ledRgb[0] || ledRgb[1] || ledRgb[2])
+                rmDrawRect(x0, y0, 3, BTHUD_CARD_H, GS_SETREG_RGBA(ledRgb[0], ledRgb[1], ledRgb[2], 0x80));
+            else
+                rmDrawRect(x0, y0, 3, BTHUD_CARD_H, GS_SETREG_RGBA(0x50, 0x50, 0x58, 0x80));
+        } else {
+            rmDrawRect(x0, y0, 3, BTHUD_CARD_H, slotColors[i]);
+        }
+
+        // slot and type
+        snprintf(text, sizeof(text), "%d %s", i + 1, typeNames[info->type & 3]);
+        fntRenderString(gTheme->fonts[0], x0 + 9, y0 + 3, ALIGN_LEFT, 0, 0, text, gTheme->textColor);
+
+        // level colour
+        if (charging)
+            color = GS_SETREG_RGBA(0x30, 0x90, 0xFF, 0x80);
+        else if (full || (known && info->percent > 40))
+            color = GS_SETREG_RGBA(0x30, 0xC0, 0x40, 0x80);
+        else if (known && info->percent > 20)
+            color = GS_SETREG_RGBA(0xE0, 0xC0, 0x20, 0x80);
+        else if (known)
+            color = GS_SETREG_RGBA(0xE0, 0x30, 0x30, 0x80);
+        else
+            color = GS_SETREG_RGBA(0x90, 0x90, 0x98, 0x80);
+
+        // battery: frame, tip and 5 segments (1% already lights the first one)
+        bx = x0 + 52;
+        by = y0 + (BTHUD_CARD_H - BTHUD_BAT_H) / 2;
+        rmDrawRect(bx, by, BTHUD_BAT_W, 1, frameColor);
+        rmDrawRect(bx, by + BTHUD_BAT_H - 1, BTHUD_BAT_W, 1, frameColor);
+        rmDrawRect(bx, by, 1, BTHUD_BAT_H, frameColor);
+        rmDrawRect(bx + BTHUD_BAT_W - 1, by, 1, BTHUD_BAT_H, frameColor);
+        rmDrawRect(bx + BTHUD_BAT_W, by + 3, 2, BTHUD_BAT_H - 6, frameColor);
+
+        lit = full ? BTHUD_SEGMENTS : (known ? (info->percent + 19) / 20 : 0);
+        if (charging && lit < BTHUD_SEGMENTS && ((guiFrameId >> 4) & 1))
+            lit++; // charging: the next segment blinks
+        for (s = 0; s < BTHUD_SEGMENTS; s++)
+            rmDrawRect(bx + 2 + s * (BTHUD_SEG_W + BTHUD_SEG_GAP), by + 2, BTHUD_SEG_W, BTHUD_BAT_H - 4, s < lit ? color : emptyColor);
+
+        // percentage
+        if (known)
+            snprintf(text, sizeof(text), "%d%%", info->percent);
+        else
+            snprintf(text, sizeof(text), "--");
+        fntRenderString(gTheme->fonts[0], bx + BTHUD_BAT_W + 8, y0 + 3, ALIGN_LEFT, 0, 0, text, gTheme->textColor);
+
+        // charging bolt / full check, right edge
+        if (charging)
+            guiBtHudBolt(x0 + BTHUD_CARD_W - 16, y0 + 6, GS_SETREG_RGBA(0xFF, 0xD0, 0x30, 0x80));
+        else if (full)
+            guiBtHudCheck(x0 + BTHUD_CARD_W - 18, y0 + 6, GS_SETREG_RGBA(0x30, 0xC0, 0x40, 0x80));
+
+        row++;
+    }
+}
+#endif
+
 static int endIntro = 0; // Break intro loop and start 'Last Played Auto Start' countdown
 static void guiDrawOverlays()
 {
@@ -1413,6 +1734,10 @@ static void guiDrawOverlays()
 
     if (busyAlpha > 0x00)
         guiDrawBusy(busyAlpha);
+
+#ifdef PADEMU
+    guiDrawBtPads();
+#endif
 
 #ifdef __DEBUG
     char text[20];

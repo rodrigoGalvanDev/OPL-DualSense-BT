@@ -8,10 +8,14 @@
 
 #include "pademu.h"
 #include "padmacro.h"
+#include "pademu_route.h"
+#define PADEMU_REG_T u32 // type of sio2_transfer_data_t.regdata
+#include "pademu_split.h"
 
 #ifdef BT
 
 #include "ds34bt.h"
+#include <padsetup.h>
 
 #define PAD_INIT            ds34bt_init
 #define PAD_GET_STATUS      ds34bt_get_status
@@ -38,6 +42,13 @@
 #endif
 
 #define DPRINTF(x...) printf(x)
+
+// Routing log, debug builds only (needs the stdio import, see imports.lst): one line each time a decision changes
+#ifdef PADEMU_DEBUG
+#define PADEMU_LOG(x...) printf(x)
+#else
+#define PADEMU_LOG(x...)
+#endif
 
 typedef struct
 {
@@ -72,10 +83,22 @@ static u8 pad_inited = 0;
 static u8 pad_enable = 0;
 static u8 pad_options = 0;
 
-static u8 mtap_enabled = 0;
-static u8 mtap_inited = 0;
-static u8 mtap_slot = 0;
-static u8 mtap_port = 0;
+static pademu_route_t pad_route; // which controller answers which port / multitap slot (pademu_route.h)
+
+/*
+ * The pad driver (Bluetooth adapter or USB pads) is started by the first pad command, not at module start.
+ * It used to start only when a command reached an emulated pad. With the multitap emulated and slot A left to the
+ * real controller, the first commands go to the real pad or to the multitap itself, so a wireless pad had nothing
+ * to connect to until the game happened to poll slot B or C. It now starts on the first pad or multitap command
+ * as soon as any pad is enabled in the menu.
+ */
+static void pademu_start_pads(void)
+{
+    if (!pad_inited) {
+        pad_inited = PAD_INIT(pad_enable, pad_options);
+        PADEMU_LOG("PADEMU: pad driver start for slots %02X: %s\n", pad_enable, pad_inited ? "ok" : "failed, will retry");
+    }
+}
 
 int install_sio2hook();
 
@@ -117,19 +140,22 @@ int _start(int argc, char *argv[])
         mips_memcpy(&PadEmuSettings_local.raw, argv[1], 4);
         pad_enable = PadEmuSettings_local.pad_enable;
         pad_vibration = PadEmuSettings_local.pad_vibration;
-        mtap_enabled = PadEmuSettings_local.mtap_enabled;
-        mtap_port = PadEmuSettings_local.mtap_port;
+        pad_route.mtap_enabled = PadEmuSettings_local.mtap_enabled;
+        pad_route.mtap_port = PadEmuSettings_local.mtap_port;
         pad_options = PadEmuSettings_local.pad_options; // enable workaround for fake ds3
+        PADEMU_LOG("PADEMU: args: emulated slots %02X, vibration %02X, multitap %d on port %d, fake DS3 workaround %d\n", pad_enable,
+                   pad_vibration, pad_route.mtap_enabled, pad_route.mtap_port + 1, pad_options);
         u32 macro_settings = 0xAB;
         mips_memcpy(&macro_settings, argv[1] + 4, 4);
         padMacroInit(macro_settings);
 #ifdef BT
-        ds34bt_set_keys(argv[1] + 8); // optional: link keys of pads paired wirelessly
+        ds34bt_set_setup(argv[1] + 8);                   // Controller Setup blob (include/padsetup.h), PADSETUP_ARG_LEN bytes
+        ds34bt_set_keys(argv[1] + 8 + PADSETUP_ARG_LEN); // optional: link keys of pads paired wirelessly
 #endif
     }
 
     DPRINTF("PADEMU: start argc=%d pad_enable=0x%02X vib=0x%02X mtap=%d mtap_port=%d options=%d\n",
-            argc, pad_enable, pad_vibration, mtap_enabled, mtap_port, pad_options);
+            argc, pad_enable, pad_vibration, pad_route.mtap_enabled, pad_route.mtap_port, pad_options);
 
     if (RegisterLibraryEntries(&_exp_pademu) != 0) {
         return MODULE_NO_RESIDENT_END;
@@ -248,6 +274,104 @@ static void hookSio2man51_2(sio2_transfer_data_t *sd)
     pademu_hookSio2man(sd, pSio2man51[1]);
 }
 
+// Offset of the second command of a transfer that polls port 1 and port 2 together, 0 when it can't be found.
+// The command lengths in regdata give it exactly; the byte scan is only the fallback for transfers they do not describe.
+static int pademu_second_cmd(const sio2_transfer_data_t *td)
+{
+    pademu_layout_t layout;
+    u32 off;
+
+    if (pademu_layout_two(td->regdata, td->in_size, &layout))
+        return (int)layout.off[1];
+
+    for (off = 5; off < td->in_size - 3; off++) {
+        if (td->in[off] == 0x01 && (td->in[off + 1] & 0xF0) == 0x40 && td->in[off + 2] == 0x00) {
+            if (off != 5 && off != 9 && off != 21)
+                continue;
+            else
+                break;
+        }
+    }
+
+    if (off + 3 >= td->in_size) {
+        PADEMU_LOG("PADEMU: second command not found\n");
+        return 0;
+    }
+
+    return (int)off;
+}
+
+#ifdef PADEMU_DEBUG
+static void pademu_log_route(int both_ports, int port, int pad_idx)
+{
+    static u8 seen[2][2]; // bit per route (real, pad 0..3): the route changes with every multitap slot, log each one once
+
+    if (!(seen[both_ports][port] & (1 << (pad_idx + 1)))) {
+        seen[both_ports][port] |= 1 << (pad_idx + 1);
+        if (pad_idx == PADEMU_ROUTE_REAL)
+            PADEMU_LOG("PADEMU: %s port %d -> real DS2\n", both_ports ? "2-port poll" : "poll", port + 1);
+        else
+            PADEMU_LOG("PADEMU: %s port %d -> emulated pad %d\n", both_ports ? "2-port poll" : "poll", port + 1, pad_idx);
+    }
+}
+#else
+#define pademu_log_route(both_ports, port, pad_idx)
+#endif
+
+// 2 port poll where one port is a real controller and the other one is emulated.
+// The real command is sent to the hardware as a transfer of its own: same buffers, only that command in the queue, so
+// no device is addressed that is not there. The emulated command is then answered in software.
+static void pademu_poll_mixed(sio2_transfer_data_t *td, Sio2McProc sio2proc, int pad1, int pad2, int cmd2)
+{
+    pademu_layout_t layout;
+    int real_idx = (pad1 == PADEMU_ROUTE_REAL) ? 0 : 1; // command that stays with the real controller
+    int emu_pad = (real_idx == 0) ? pad2 : pad1;
+
+#ifdef PADEMU_DEBUG
+    {
+        static int last_how = -1; // log once, and again if the way changes
+        int how = pademu_layout_two(td->regdata, td->in_size, &layout);
+
+        if (how != last_how) {
+            last_how = how;
+            PADEMU_LOG("PADEMU: mixed poll: %s (regdata %08X %08X, size %d)\n", how ? "real command sent alone" : "fallback", (unsigned)td->regdata[0],
+                       (unsigned)td->regdata[1], (int)td->in_size);
+        }
+    }
+#endif
+
+    if (pademu_layout_two(td->regdata, td->in_size, &layout)) {
+        sio2_transfer_data_t real;
+
+        mips_memcpy(&real, td, sizeof(real)); // not "real = *td": that makes the compiler call memcpy, which the module does not import
+
+        pademu_split_regdata(td->regdata, real_idx, real.regdata);
+        real.in_size = layout.len[real_idx];
+        real.out_size = layout.len[real_idx];
+        real.in = td->in + layout.off[real_idx];
+        real.out = td->out + layout.off[real_idx];
+
+        sio2proc(&real);
+    } else {
+        // not a transfer the command lengths describe: keep the old way, the emulated command's device is switched off
+        int off = (real_idx == 0) ? cmd2 : 0;
+
+        td->in[off] = 0x00;
+        sio2proc(td);
+        td->in[off] = 0x01;
+    }
+
+    pademu_start_pads();
+
+    if (real_idx == 0)
+        pademu_cmd(emu_pad, &td->in[cmd2], &td->out[cmd2], td->in_size - cmd2);
+    else
+        pademu_cmd(emu_pad, td->in, td->out, cmd2);
+
+    td->stat6c = 0x1100;
+    td->stat70 = 0x0F;
+}
+
 void pademu_hookSio2man(sio2_transfer_data_t *td, Sio2McProc sio2proc)
 {
     register u32 ctrl, port1, port2;
@@ -264,51 +388,54 @@ void pademu_hookSio2man(sio2_transfer_data_t *td, Sio2McProc sio2proc)
     port2 = td->regdata[1] & 0x03;
 
     if ((ctrl & 0xF0) == 0x40) {
-        if (td->port_ctrl2[port1] == 0x00030064 && td->in[0] == 0x21 && mtap_enabled) {
+        // Any emulated option is on: bring the pad driver up on the first pad or multitap command
+        if (pad_route.enabled || pad_route.mtap_enabled) {
+            if (td->in[0] == 0x01 || td->in[0] == 0x21)
+                pademu_start_pads();
+        }
+
+#ifdef PADEMU_DEBUG
+        if (td->in[0] == 0x21) { // multitap command: say once per port and result whether PADEMU answers it
+            static u8 mtap_seen[2][2];
+            int match = (td->port_ctrl2[port1] == 0x00030064) && pademu_route_is_mtap_port(&pad_route, (int)(port1 & 1));
+
+            if (!mtap_seen[port1 & 1][match]) {
+                mtap_seen[port1 & 1][match] = 1;
+                PADEMU_LOG("PADEMU: multitap command on port %d (port_ctrl2 %08X): %s\n", (int)(port1 & 1) + 1, (unsigned)td->port_ctrl2[port1],
+                           match ? "answered by PADEMU" : "left to the console");
+            }
+        }
+#endif
+        if (td->port_ctrl2[port1] == 0x00030064 && td->in[0] == 0x21 && pademu_route_is_mtap_port(&pad_route, (int)(port1 & 1))) {
+            // MTAPMAN addresses the multitap of PS2 port N as SIO2 port N|2 (regdata port 2 or 3), so port1 is 2 or 3 here
             sio2proc = pademu_mtap;
         } else if (td->in[0] == 0x01) {
-            if (port2 == 1) { // 2 sio cmds
-                if (mtap_inited) {
-                    if (pad[0].enabled) {
-                        td->in[0] = 0x00;
-                        sio2proc(td);
+            if (port2 == 1) { // 2 sio cmds: port 1 and port 2 polled together
+                int cmd2 = pademu_second_cmd(td);
+
+                if (cmd2) {
+                    int pad1 = pademu_route_port(&pad_route, 0);
+                    int pad2 = pademu_route_port(&pad_route, 1);
+
+                    pademu_log_route(1, 0, pad1);
+                    pademu_log_route(1, 1, pad2);
+
+                    if (pad1 != PADEMU_ROUTE_REAL && pad2 != PADEMU_ROUTE_REAL) { // both emulated
                         sio2proc = pademu;
-                    }
-                } else {
-                    if (pad[0].enabled && pad[1].enabled) { // emulating 2 pads
-                        sio2proc = pademu;
-                    } else if (pad[0].enabled || pad[1].enabled) { // only one
-                        if (pad[0].enabled) {
-                            ctrl = 0;
-                        } else if (pad[1].enabled) {
-                            for (ctrl = 5; ctrl < td->in_size - 3; ctrl++) {
-                                if (td->in[ctrl] == 0x01 && (td->in[ctrl + 1] & 0xF0) == 0x40 && td->in[ctrl + 2] == 0x00) {
-                                    if (ctrl != 5 && ctrl != 9 && ctrl != 21)
-                                        continue;
-                                    else
-                                        break;
-                                }
-                            }
-                            if (ctrl + 3 == td->in_size) {
-                                return;
-                            }
-                        }
-                        td->in[ctrl] = 0x00;
-                        sio2proc(td);
-                        td->in[ctrl] = 0x01;
-                        sio2proc = pademu;
+                    } else if (pad1 != PADEMU_ROUTE_REAL || pad2 != PADEMU_ROUTE_REAL) {
+                        // One real pad and one emulated. The real command goes alone through the console's SIO2
+                        // (pademu_poll_mixed), the emulated one is answered here.
+                        pademu_poll_mixed(td, sio2proc, pad1, pad2, cmd2);
+                        return;
                     }
                 }
             } else {
-                if (mtap_inited) {
-                    if (mtap_port == port1) {
-                        sio2proc = pademu;
-                    }
-                } else {
-                    if (pad[port1].enabled) { // emulating this port
-                        sio2proc = pademu;
-                    }
-                }
+                int pad_idx = pademu_route_port(&pad_route, port1);
+
+                pademu_log_route(0, port1 & 1, pad_idx);
+
+                if (pad_idx != PADEMU_ROUTE_REAL)
+                    sio2proc = pademu;
             }
         }
     }
@@ -319,6 +446,8 @@ void pademu_hookSio2man(sio2_transfer_data_t *td, Sio2McProc sio2proc)
 void pademu_setup(u8 ports, u8 vib)
 {
     u8 i;
+
+    pad_route.enabled = ports & 0x0F;
 
     for (i = 0; i < MAX_PORTS; i++) {
         pad[i].mode = 0;
@@ -351,9 +480,8 @@ u8 pademu_data[6][6] =
 
 void pademu(sio2_transfer_data_t *td)
 {
-    int port;
-    u8 port1, port2, cmd_size;
-    u8 *in, *out;
+    u8 port1, port2;
+    int cmd2, pad1, pad2;
 
     port1 = td->regdata[0] & 0x03;
     port2 = td->regdata[1] & 0x03;
@@ -361,66 +489,26 @@ void pademu(sio2_transfer_data_t *td)
     td->stat6c = 0x1100; //?
     td->stat70 = 0x0F;   //?
 
-    if (!pad_inited) {
-        pad_inited = PAD_INIT(pad_enable, pad_options);
-        DPRINTF("PADEMU: init driver -> %d (pad_enable=0x%02X options=0x%02X)\n", pad_inited, pad_enable, pad_options);
-    }
+    pademu_start_pads();
 
-    if (port2 == 1) {
-        // find next cmd
-        for (cmd_size = 5; cmd_size < td->in_size - 3; cmd_size++) {
-            if (td->in[cmd_size] == 0x01 && (td->in[cmd_size + 1] & 0xF0) == 0x40 && td->in[cmd_size + 2] == 0x00) {
-                if (cmd_size != 5 && cmd_size != 9 && cmd_size != 21)
-                    continue;
-                else
-                    break;
-            }
-        }
-
-        if (cmd_size + 3 == td->in_size) {
-            DPRINTF("Second cmd not found!\n");
+    if (port2 == 1) { // port 1 and port 2 polled together
+        cmd2 = pademu_second_cmd(td);
+        if (!cmd2)
             return;
-        }
 
-        if (mtap_inited) {
-            if (mtap_port == 0) {
-                in = td->in;
-                out = td->out;
-                port = 0;
-            } else {
-                in = (u8 *)&td->in[cmd_size];
-                out = (u8 *)&td->out[cmd_size];
-                port = 0;
-                cmd_size = td->in_size - cmd_size;
-            }
-        } else {
-            if (pad[0].enabled) {
-                in = td->in;
-                out = td->out;
-                port = 0;
+        pad1 = pademu_route_port(&pad_route, 0);
+        pad2 = pademu_route_port(&pad_route, 1);
 
-                if (pad[1].enabled) { // emulating ports 0 & 1
-                    pademu_cmd(1, (u8 *)&td->in[cmd_size], (u8 *)&td->out[cmd_size], td->in_size - cmd_size);
-                }
-            } else { // emulating only port 1
-                in = (u8 *)&td->in[cmd_size];
-                out = (u8 *)&td->out[cmd_size];
-                port = 1;
-                cmd_size = td->in_size - cmd_size;
-            }
-        }
+        if (pad2 != PADEMU_ROUTE_REAL)
+            pademu_cmd(pad2, &td->in[cmd2], &td->out[cmd2], td->in_size - cmd2);
+        if (pad1 != PADEMU_ROUTE_REAL)
+            pademu_cmd(pad1, td->in, td->out, cmd2);
     } else {
-        in = td->in;
-        out = td->out;
-        port = port1;
-        cmd_size = td->in_size;
+        pad1 = pademu_route_port(&pad_route, port1);
 
-        if (mtap_inited) {
-            port = mtap_slot;
-        }
+        if (pad1 != PADEMU_ROUTE_REAL)
+            pademu_cmd(pad1, td->in, td->out, td->in_size);
     }
-
-    pademu_cmd(port, in, out, cmd_size);
 }
 
 void pademu_cmd(int port, u8 *in, u8 *out, u8 out_size)
@@ -428,6 +516,18 @@ void pademu_cmd(int port, u8 *in, u8 *out, u8 out_size)
     u8 i;
 
     mips_memset(out, 0x00, out_size);
+
+#ifdef PADEMU_DEBUG
+    {
+        static signed char was_running[4] = {-1, -1, -1, -1}; // one line when a pad becomes ready or goes away
+        int running = (PAD_GET_STATUS(port) & PAD_STATE_RUNNING) ? 1 : 0;
+
+        if (port >= 0 && port < 4 && was_running[port] != running) {
+            was_running[port] = running;
+            PADEMU_LOG("PADEMU: emulated pad %d: %s\n", port, running ? "controller connected" : "no controller");
+        }
+    }
+#endif
 
     if (!(PAD_GET_STATUS(port) & PAD_STATE_RUNNING)) {
         pad[port].lrum = 2;
@@ -566,7 +666,7 @@ void pademu_mtap(sio2_transfer_data_t *td)
     mips_memset(td->out, 0x00, td->out_size);
     td->stat6c = 0x0001d100;
 
-    if (port1 != mtap_port) {
+    if (port1 != pad_route.mtap_port) {
         return;
     }
 
@@ -575,7 +675,9 @@ void pademu_mtap(sio2_transfer_data_t *td)
             mips_memcpy(td->out, &mtap_data, sizeof(mtap_data));
             td->out[3] = MAX_SLOT;
             td->stat6c = 0x00001100;
-            mtap_inited = 1;
+            if (!pad_route.mtap_inited)
+                PADEMU_LOG("PADEMU: the game uses the multitap of port %d\n", pad_route.mtap_port + 1);
+            pad_route.mtap_inited = 1;
             break;
 
         case 0x13: // returns slot number for mc
@@ -583,7 +685,17 @@ void pademu_mtap(sio2_transfer_data_t *td)
 
         case 0x21: // changes slot for pad
             mips_memcpy(td->out, &mtap_data, sizeof(mtap_data));
-            mtap_slot = td->out[5] = td->in[2]; // slot
+#ifdef PADEMU_DEBUG
+            {
+                static u8 slot_seen; // each slot is selected hundreds of times per second: log only the first time
+
+                if (!(slot_seen & (1 << (td->in[2] & 3)))) {
+                    slot_seen |= 1 << (td->in[2] & 3);
+                    PADEMU_LOG("PADEMU: multitap slot %d\n", td->in[2] & 3);
+                }
+            }
+#endif
+            pad_route.mtap_slot = td->out[5] = td->in[2]; // slot
             td->out[6] = 0x5a;
             td->stat6c = 0x00001100;
             break;

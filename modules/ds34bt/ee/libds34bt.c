@@ -18,6 +18,11 @@
 #define DS34BT_PAIR          13
 #define DS34BT_GET_PAIR      14
 #define DS34BT_SET_KEY       15
+#define DS34BT_GET_DEBUG     16
+#define DS34BT_GET_PADDEBUG  17
+#define DS34BT_GET_INFO_ALL  18
+#define DS34BT_DISCONNECT    19
+#define DS34BT_GET_PAD_ADDR  20
 
 #define DS34BT_BIND_RPC_ID 0x18E3878F
 
@@ -116,7 +121,7 @@ int ds34bt_set_led(int port, u8 *led)
     rpcbuf[1] = led[0];
     rpcbuf[2] = led[1];
     rpcbuf[3] = led[2];
-    rpcbuf[4] = 0;
+    rpcbuf[4] = led[3]; // bit0: blink, bit1: colour chosen by the user (kept by the driver)
 
     return (SifCallRpc(&ds34bt, DS34BT_SET_LED, 0, rpcbuf, 5, NULL, 0, NULL, NULL) == 0);
 }
@@ -210,6 +215,20 @@ int ds34bt_get_search(int index, int *count, u8 *bdaddr, char *name)
     return rpcbuf[0];
 }
 
+// Drops the connected pad of this port (it can connect again by pressing PS). Returns 1 if a pad was disconnected.
+int ds34bt_disconnect(int port)
+{
+    if (!ds34bt_inited)
+        return 0;
+
+    rpcbuf[0] = port;
+
+    if (SifCallRpc(&ds34bt, DS34BT_DISCONNECT, 0, rpcbuf, 1, rpcbuf, 1, NULL, NULL) == 0)
+        return rpcbuf[0];
+
+    return 0;
+}
+
 int ds34bt_pair(int index)
 {
     if (!ds34bt_inited)
@@ -253,4 +272,81 @@ int ds34bt_set_key(const u8 *bdaddr, const u8 *key)
     }
 
     return (SifCallRpc(&ds34bt, DS34BT_SET_KEY, 0, rpcbuf, 23, NULL, 0, NULL, NULL) == 0);
+}
+
+// Debug info of the iop driver: out = DS34BT_DEBUG_SIZE bytes (layout: DBG_* in modules/ds34bt/iop/ds34bt.c)
+int ds34bt_get_debug(u8 *out)
+{
+    if (!ds34bt_inited)
+        return 0;
+
+    if (SifCallRpc(&ds34bt, DS34BT_GET_DEBUG, 0, NULL, 0, rpcbuf, DS34BT_DEBUG_SIZE, NULL, NULL) != 0)
+        return 0;
+
+    memcpy(out, rpcbuf, DS34BT_DEBUG_SIZE);
+
+    return 1;
+}
+
+// Pad 0 diagnostics of the iop driver: out = DS34BT_DEBUG_SIZE bytes (layout: ds34bt_get_paddebug in modules/ds34bt/iop/ds34bt.c)
+int ds34bt_get_paddebug(u8 *out)
+{
+    if (!ds34bt_inited)
+        return 0;
+
+    if (SifCallRpc(&ds34bt, DS34BT_GET_PADDEBUG, 0, NULL, 0, rpcbuf, DS34BT_DEBUG_SIZE, NULL, NULL) != 0)
+        return 0;
+
+    memcpy(out, rpcbuf, DS34BT_DEBUG_SIZE);
+
+    return 1;
+}
+
+// Connected pad, type and battery of every port: one RPC, the result is kept for ds34bt_cached_info()
+static ds34bt_info_t info_cache[DS34BT_PADS_MAX];
+
+int ds34bt_update_info(void)
+{
+    int i;
+
+    memset(info_cache, 0, sizeof(info_cache));
+    for (i = 0; i < DS34BT_PADS_MAX; i++)
+        info_cache[i].percent = DS34BT_BAT_PCT_UNKNOWN;
+
+    if (!ds34bt_inited)
+        return 0;
+
+    if (SifCallRpc(&ds34bt, DS34BT_GET_INFO_ALL, 0, NULL, 0, rpcbuf, DS34BT_PADS_MAX * 4, NULL, NULL) != 0)
+        return 0;
+
+    for (i = 0; i < DS34BT_PADS_MAX; i++) {
+        info_cache[i].connected = rpcbuf[i * 4 + 0];
+        info_cache[i].type = rpcbuf[i * 4 + 1];
+        info_cache[i].percent = rpcbuf[i * 4 + 2];
+        info_cache[i].state = rpcbuf[i * 4 + 3];
+    }
+
+    return 1;
+}
+
+const ds34bt_info_t *ds34bt_cached_info(int port)
+{
+    return &info_cache[(port >= 0 && port < DS34BT_PADS_MAX) ? port : 0];
+}
+
+// Bluetooth address (HCI order) of the pad running on a port. Returns 1 and fills bdaddr[6] when there is one.
+int ds34bt_get_pad_addr(int port, u8 *bdaddr)
+{
+    if (!ds34bt_inited || port < 0 || port >= DS34BT_PADS_MAX)
+        return 0;
+
+    rpcbuf[0] = port;
+    if (SifCallRpc(&ds34bt, DS34BT_GET_PAD_ADDR, 0, rpcbuf, 1, rpcbuf, 8, NULL, NULL) != 0)
+        return 0;
+
+    if (!rpcbuf[6])
+        return 0;
+
+    memcpy(bdaddr, rpcbuf, 6);
+    return 1;
 }

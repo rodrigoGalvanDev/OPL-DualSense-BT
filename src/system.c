@@ -32,9 +32,11 @@
 #include <libds34bt.h>
 #include <libds34usb.h>
 #include "include/btkeys.h"
+#include "include/padsetup.h"
 #include "include/guigame.h"
 
 _Static_assert(BTKEYS_ARG_LEN <= CORE_PADEMU_BTKEYS_LEN, "PadEmuBtKeys too small");
+_Static_assert(PADSETUP_ARG_LEN == CORE_PADEMU_SETUP_LEN, "PadEmuSetup size");
 #endif
 
 #define NEWLIB_PORT_AWARE
@@ -270,7 +272,8 @@ void sysReset(int modload_mask)
     sysLoadModuleBuffer(&audsrv_irx, size_audsrv_irx, 0, NULL);
 
 #ifdef PADEMU
-    int ds3pads = 1; // only one pad enabled
+    int ds3pads = 1; // only one pad enabled (USB)
+    int ds34btpads = 0x0F; // up to four Bluetooth pads
 
     ds34usb_deinit();
     ds34bt_deinit();
@@ -279,7 +282,7 @@ void sysReset(int modload_mask)
         LOG("[DS34_USB]:\n");
         sysLoadModuleBuffer(&ds34usb_irx, size_ds34usb_irx, 4, (char *)&ds3pads);
         LOG("[DS34_BT]:\n");
-        sysLoadModuleBuffer(&ds34bt_irx, size_ds34bt_irx, 4, (char *)&ds3pads);
+        sysLoadModuleBuffer(&ds34bt_irx, size_ds34bt_irx, 4, (char *)&ds34btpads);
 
         ds34usb_init();
         ds34bt_init();
@@ -790,6 +793,9 @@ void sysPrintEECoreConfig(struct EECoreConfig_t *config)
     LOG("PADEMU settings = 0x%08X (modo %s, puertos 0x%02X)\n", (unsigned)gPadEmuSettings, (gPadEmuSettings & 0xFF) ? "BT" : "USB", (unsigned)((gPadEmuSettings >> 8) & 0xFF));
 #ifdef PADEMU
     LOG("PADEMU wireless keys = %d\n", config->PadEmuBtKeys[0] ? (int)((strlen(config->PadEmuBtKeys) - 3) / BTKEYS_ENTRY_HEX) : 0);
+    // what the game gets: byte 0 = mode (0 USB, 1 Bluetooth), bits 8-11 emulated slots, bits 16-19 vibration, bit 24 multitap, bit 25 its port, bit 26 workaround
+    LOG("PADEMU settings = 0x%08X (mode %d, slots %X, vibration %X, multitap %d on port %d)\n", gPadEmuSettings, gPadEmuSettings & 0xFF, (gPadEmuSettings >> 8) & 0xF,
+        (gPadEmuSettings >> 16) & 0xF, (gPadEmuSettings >> 24) & 1, ((gPadEmuSettings >> 25) & 1) + 1);
 #endif
 
     LOG("enforceLanguage = %s\n", config->enforceLanguage == 0 ? "Disabled" : "Enabled");
@@ -949,6 +955,7 @@ void sysLaunchLoaderElf(const char *filename, const char *mode_str, int size_cdv
     config->PadEmuSettings = (unsigned int)(gPadEmuSettings >> 8);
     config->PadMacroSettings = (unsigned int)(gPadMacroSettings);
     guiGameBtKeysModuleArg(config->PadEmuBtKeys);
+    guiGameSetupModuleArg(config->PadEmuSetup);
 #endif
 
     config->CustomOSDConfigParam.spdifMode = PARAM.spdifMode;

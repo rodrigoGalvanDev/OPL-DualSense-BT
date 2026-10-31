@@ -58,6 +58,9 @@ ifeq ($(PADEMU),1)
 EE_CFLAGS += -DPADEMU
 endif
 
+# Track header dependencies: coreconfig.h is shared with the interface, a stale object here reads the config at old offsets
+EE_CFLAGS += -MMD -MP
+
 EE_LIBS += -lkernel -lgcc
 
 $(EE_OBJS_DIR)%.o : $(EE_SRC_DIR)%.c
@@ -84,3 +87,5 @@ clean_all:
 	rm -f -r $(EE_OBJS_DIR) $(EE_BIN) $(MAPFILE)
 
 include $(PS2SDK)/samples/Makefile.pref
+
+-include $(patsubst %.o,%.d,$(filter %.o,$(EE_OBJS)))

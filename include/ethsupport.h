@@ -23,5 +23,6 @@ int ethGetNetConfig(u8 *ip_address, u8 *netmask, u8 *gateway);
 int ethApplyConfig(void);
 int ethGetDHCPStatus(void);
 item_list_t *ethGetObject(int initOnly);
+int ethGetShareNames(char names[][32], int max, int *err); // shares of the connected server (-1 = no session, -2 = the server refused the list, *err = its code)
 
 #endif

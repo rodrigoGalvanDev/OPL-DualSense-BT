@@ -114,6 +114,10 @@ struct UIItem diaNetConfig[] = {
     {UI_SPACER},
     {UI_STRING, NETCFG_SHARE_NAME, 1, 1, _STR_HINT_SHARENAME, 0, 0, {.stringvalue = {"PS2SMB", "PS2SMB", NULL}}},
     {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {" ", -1}}}, // not "": an empty label is drawn as "<not set>"
+    {UI_SPACER},
+    {UI_BUTTON, NETCFG_SHARE_BROWSE, 1, 1, -1, 0, 0, {.label = {"Browse shares", -1}}},
+    {UI_BREAK},
 
     {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {NULL, _STR_USER}}},
     {UI_SPACER},
@@ -554,6 +558,17 @@ struct UIItem diaCheatConfig[] = {
     {UI_TERMINATOR}};
 
 #ifdef PADEMU
+/*
+ * Pad Emulator Settings: one control per row (label on the left half, value on the right), so nothing overlaps.
+ * The rows of the slot table follow the multitap (1P 2P / 1A to 1D / 2A to 2D) and each one is a single choice:
+ * Off / On / On + Vibration. Everything about Bluetooth pads (adapter, connected pads, search, pairing) is in diaPadEmuBtPads.
+ */
+#define PADEMU_SLOT_ROW(n) \
+    {UI_LABEL, PADCFG_SLOT_LABEL0 + (n), 1, 1, -1, -50, 0, {.label = {"", -1}}}, \
+    {UI_SPACER}, \
+    {UI_ENUM, PADCFG_SLOT_EMU0 + (n), 1, 1, _STR_HINT_PADEMU_PORT, 0, 0, {.intvalue = {0, 0}}}, \
+    {UI_BREAK},
+
 struct UIItem diaPadEmuConfig[] = {
     {UI_LABEL, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_PADEMU_SETTINGS}}},
     {UI_SPLITTER},
@@ -561,7 +576,6 @@ struct UIItem diaPadEmuConfig[] = {
     {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {NULL, _STR_SETTINGS_SOURCE}}},
     {UI_SPACER},
     {UI_ENUM, PADCFG_PADEMU_SOURCE, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
-    {UI_BREAK},
     {UI_BREAK},
 
     {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PADEMU_ENABLE}}},
@@ -583,42 +597,76 @@ struct UIItem diaPadEmuConfig[] = {
     {UI_SPACER},
     {UI_INT, PADCFG_PADEMU_MTAP_PORT, 1, 1, _STR_HINT_MTAP_PORT, 0, 0, {.intvalue = {1, 1, 1, 2}}},
     {UI_BREAK},
-    {UI_BREAK},
 
-    {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PADPORT}}},
-    {UI_SPACER},
-    {UI_ENUM, PADCFG_PADPORT, 1, 1, _STR_HINT_PAD_PORT, 0, 0, {.intvalue = {1, 1}}},
-    {UI_BREAK},
-
-    {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PADEMU_PORT}}},
-    {UI_SPACER},
-    {UI_BOOL, PADCFG_PADEMU_PORT, 1, 1, _STR_HINT_PADEMU_PORT, 0, 0, {.intvalue = {1, 1}}},
-    {UI_BREAK},
-    {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PADEMU_VIB}}},
-    {UI_SPACER},
-    {UI_BOOL, PADCFG_PADEMU_VIB, 1, 1, _STR_HINT_PADEMU_VIB, 0, 0, {.intvalue = {1, 1}}},
-    {UI_BREAK},
-
+    // ports to emulate: 1P/2P, or the four slots of the multitap (the last two rows are hidden without it)
     {UI_SPLITTER},
+    PADEMU_SLOT_ROW(0)
+    PADEMU_SLOT_ROW(1)
+    PADEMU_SLOT_ROW(2)
+    PADEMU_SLOT_ROW(3)
+    // with the multitap emulated, the other physical port is left to the real controller plugged in it (or to a real multitap)
+    {UI_LABEL, PADCFG_PORT_OTHER_LABEL, 1, 1, -1, -50, 0, {.label = {"", -1}}},
+    {UI_SPACER},
+    {UI_LABEL, PADCFG_PORT_OTHER_VALUE, 1, 1, -1, 0, 0, {.label = {"Real controller", -1}}},
     {UI_BREAK},
 
-    {UI_LABEL, PADCFG_USBDG_MAC_STR, 1, 1, -1, -50, 0, {.label = {NULL, _STR_USBDG_MAC}}},
+    // pad behaviour and wireless pads (Bluetooth mode only)
+    {UI_SPLITTER},
+    {UI_LABEL, PADCFG_SETUP_STR, 1, 1, -1, -50, 0, {.label = {"Controller Setup", -1}}},
+    {UI_SPACER},
+    {UI_BUTTON, PADCFG_SETUP, 1, 1, -1, 0, 0, {.label = {"Open", -1}}},
+    {UI_BREAK},
+
+    {UI_LABEL, PADCFG_BT_OPEN_STR, 1, 1, -1, -50, 0, {.label = {"Bluetooth Pads", -1}}},
+    {UI_SPACER},
+    {UI_BUTTON, PADCFG_BT_OPEN, 1, 1, -1, 0, 0, {.label = {"Open", -1}}},
+    {UI_BREAK},
+
+    {UI_OK, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_OK}}},
+
+    // end of dialog
+    {UI_TERMINATOR}};
+
+// One row per pad slot: what is connected on it (type + battery) and a button to disconnect it
+#define PADEMU_BTPAD_ROW(n) \
+    {UI_LABEL, PADCFG_BTP_LABEL0 + (n), 1, 1, -1, -50, 0, {.label = {"", -1}}}, \
+    {UI_SPACER}, \
+    {UI_BUTTON, PADCFG_BTP_DISC0 + (n), 1, 1, -1, 0, 0, {.label = {"Disconnect", -1}}}, \
+    {UI_BREAK},
+
+struct UIItem diaPadEmuBtPads[] = {
+    {UI_LABEL, 0, 1, 1, -1, 0, 0, {.label = {"Bluetooth Pads", -1}}},
+    {UI_SPLITTER},
+
+    {UI_LABEL, PADCFG_USBDG_MAC_STR, 1, 1, -1, -50, 0, {.label = {"Adapter", -1}}},
     {UI_SPACER},
     {UI_LABEL, PADCFG_USBDG_MAC, 1, 1, -1, 0, 0, {.label = {"", -1}}},
     {UI_BREAK},
-    {UI_LABEL, PADCFG_PAD_MAC_STR, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PAD_MAC}}},
+
+    // connected pads
+    {UI_SPLITTER},
+    PADEMU_BTPAD_ROW(0)
+    PADEMU_BTPAD_ROW(1)
+    PADEMU_BTPAD_ROW(2)
+    PADEMU_BTPAD_ROW(3)
+    {UI_LABEL, PADCFG_BTP_NONE, 1, 1, -1, 0, 0, {.label = {"No pad connected", -1}}},
+    {UI_BREAK},
+
+    // connecting: search lists the pads in pairing mode, pairing one saves it so it connects by itself with the PS button
+    {UI_SPLITTER},
+    {UI_LABEL, PADCFG_BTSEARCH_STR, 1, 1, -1, -50, 0, {.label = {"Search / Pair new pad", -1}}},
+    {UI_SPACER},
+    {UI_BUTTON, PADCFG_BTSEARCH, 1, 1, -1, 0, 0, {.label = {"Search", -1}}},
+    {UI_BREAK},
+
+    // DualShock 3 plugged in the USB port: copies the adapter address into it
+    {UI_LABEL, PADCFG_PAD_MAC_STR, 1, 1, -1, -50, 0, {.label = {"DS3 on USB cable", -1}}},
     {UI_SPACER},
     {UI_LABEL, PADCFG_PAD_MAC, 1, 1, -1, 0, 0, {.label = {"", -1}}},
     {UI_BREAK},
-
-    {UI_LABEL, PADCFG_PAIR_STR, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PAIR_PAD}}},
+    {UI_LABEL, PADCFG_PAIR_STR, 1, 1, -1, -50, 0, {.label = {"Pair DS3", -1}}},
     {UI_SPACER},
     {UI_BUTTON, PADCFG_PAIR, 1, 1, _STR_HINT_PAIRPAD, 0, 0, {.label = {NULL, _STR_PAIR}}},
-    {UI_BREAK},
-
-    {UI_LABEL, PADCFG_BTSEARCH_STR, 1, 1, -1, -50, 0, {.label = {"Wireless Pairing", -1}}},
-    {UI_SPACER},
-    {UI_BUTTON, PADCFG_BTSEARCH, 1, 1, -1, 0, 0, {.label = {"Search", -1}}},
     {UI_BREAK},
 
     {UI_LABEL, PADCFG_PADEMU_WORKAROUND_STR, 1, 1, -1, -50, 0, {.label = {NULL, _STR_PADEMU_WORKAROUND}}},
@@ -626,8 +674,9 @@ struct UIItem diaPadEmuConfig[] = {
     {UI_BOOL, PADCFG_PADEMU_WORKAROUND, 1, 1, _STR_HINT_PADEMU_WORKAROUND, 0, 0, {.intvalue = {1, 1}}},
     {UI_BREAK},
 
-    {UI_BREAK},
-    {UI_BUTTON, PADCFG_BTINFO, 1, 1, _STR_HINT_BTINFO, 0, 0, {.label = {NULL, _STR_BTINFO}}},
+    {UI_LABEL, 0, 1, 1, -1, -50, 0, {.label = {"Adapter information", -1}}},
+    {UI_SPACER},
+    {UI_BUTTON, PADCFG_BTINFO, 1, 1, _STR_HINT_BTINFO, 0, 0, {.label = {"Open", -1}}},
     {UI_BREAK},
 
     {UI_OK, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_OK}}},
@@ -647,7 +696,6 @@ struct UIItem diaPadEmuBtSearch[] = {
 
     {UI_LABEL, PADCFG_BTS_STATUS, 1, 1, -1, 0, 0, {.label = {"", -1}}},
     {UI_BREAK},
-    {UI_BREAK},
 
     {UI_BUTTON, PADCFG_BTS_DEV0, 1, 1, -1, 0, 0, {.label = {"", -1}}},
     {UI_BREAK},
@@ -660,6 +708,132 @@ struct UIItem diaPadEmuBtSearch[] = {
     {UI_BREAK},
 
     {UI_BUTTON, PADCFG_BTS_AGAIN, 1, 1, -1, 0, 0, {.label = {"Search", -1}}},
+    {UI_BREAK},
+
+    // adapter / driver debug lines (filled by guiGameBtDebugUpdate)
+    {UI_LABEL, PADCFG_BTS_DBG0, 1, 1, -1, 0, 0, {.label = {"", -1}}},
+    {UI_BREAK},
+    {UI_LABEL, PADCFG_BTS_DBG1, 1, 1, -1, 0, 0, {.label = {"", -1}}},
+    {UI_BREAK},
+    {UI_LABEL, PADCFG_BTS_DBG2, 1, 1, -1, 0, 0, {.label = {"", -1}}},
+    {UI_BREAK},
+    {UI_LABEL, PADCFG_BTS_DBG3, 1, 1, -1, 0, 0, {.label = {"", -1}}},
+    {UI_BREAK},
+
+    {UI_OK, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_OK}}},
+
+    // end of dialog
+    {UI_TERMINATOR}};
+
+struct UIItem diaPadEmuSetup[] = {
+    {UI_LABEL, 0, 1, 1, -1, 0, 0, {.label = {"Controller Setup", -1}}},
+    {UI_SPLITTER},
+
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Touchpad", -1}}},
+    {UI_ENUM, PADSET_TOUCH_MODE, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Touchpad sensitivity", -1}}},
+    {UI_INT, PADSET_TOUCH_SENS, 1, 1, -1, 0, 0, {.intvalue = {4, 4, 1, 8}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Touchpad click", -1}}},
+    {UI_ENUM, PADSET_TOUCH_CLICK, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_BREAK},
+
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"PS button: short press", -1}}},
+    {UI_ENUM, PADSET_PS_TAP, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"PS button: hold", -1}}},
+    {UI_ENUM, PADSET_PS_HOLD, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"PS button: hold time", -1}}},
+    {UI_ENUM, PADSET_PS_TIME, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_BREAK},
+
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Lightbar slot 1", -1}}},
+    {UI_ENUM, PADSET_LED0, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_COLOUR, PADSET_LEDCOL0, 1, 1, -1, 0, 0, {.colourvalue = {128, 0, 255}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Lightbar slot 2", -1}}},
+    {UI_ENUM, PADSET_LED1, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_COLOUR, PADSET_LEDCOL1, 1, 1, -1, 0, 0, {.colourvalue = {128, 0, 255}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Lightbar slot 3", -1}}},
+    {UI_ENUM, PADSET_LED2, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_COLOUR, PADSET_LEDCOL2, 1, 1, -1, 0, 0, {.colourvalue = {128, 0, 255}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Lightbar slot 4", -1}}},
+    {UI_ENUM, PADSET_LED3, 1, 1, -1, 0, 0, {.intvalue = {0, 0}}},
+    {UI_COLOUR, PADSET_LEDCOL3, 1, 1, -1, 0, 0, {.colourvalue = {128, 0, 255}}},
+    {UI_BREAK},
+    {UI_BREAK},
+
+    {UI_LABEL, 0, 1, 1, -1, -40, 0, {.label = {"Button remapping", -1}}},
+    {UI_BUTTON, PADSET_REMAP, 1, 1, -1, 0, 0, {.label = {"Edit", -1}}},
+    {UI_BREAK},
+    {UI_BUTTON, PADSET_RESET, 1, 1, -1, 0, 0, {.label = {"Restore defaults", -1}}},
+    {UI_BREAK},
+
+    {UI_OK, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_OK}}},
+
+    // end of dialog
+    {UI_TERMINATOR}};
+
+struct UIItem diaPadEmuRemap[] = {
+    {UI_LABEL, 0, 1, 1, -1, 0, 0, {.label = {"Button remapping (pad button -> PS2 button)", -1}}},
+    {UI_SPLITTER},
+
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Select", -1}}},
+    {UI_ENUM, PADREM_BASE + 0, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"L2", -1}}},
+    {UI_ENUM, PADREM_BASE + 8, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"L3", -1}}},
+    {UI_ENUM, PADREM_BASE + 1, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"R2", -1}}},
+    {UI_ENUM, PADREM_BASE + 9, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"R3", -1}}},
+    {UI_ENUM, PADREM_BASE + 2, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"L1", -1}}},
+    {UI_ENUM, PADREM_BASE + 10, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Start", -1}}},
+    {UI_ENUM, PADREM_BASE + 3, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"R1", -1}}},
+    {UI_ENUM, PADREM_BASE + 11, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Up", -1}}},
+    {UI_ENUM, PADREM_BASE + 4, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Triangle", -1}}},
+    {UI_ENUM, PADREM_BASE + 12, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Right", -1}}},
+    {UI_ENUM, PADREM_BASE + 5, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Circle", -1}}},
+    {UI_ENUM, PADREM_BASE + 13, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Down", -1}}},
+    {UI_ENUM, PADREM_BASE + 6, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Cross", -1}}},
+    {UI_ENUM, PADREM_BASE + 14, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Left", -1}}},
+    {UI_ENUM, PADREM_BASE + 7, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, -14, 0, {.label = {"Square", -1}}},
+    {UI_ENUM, PADREM_BASE + 15, 1, 1, -1, -30, 0, {.intvalue = {0, 0}}},
+    {UI_BREAK},
+    {UI_BREAK},
+    {UI_BUTTON, PADREM_RESET, 1, 1, -1, 0, 0, {.label = {"Clear all", -1}}},
     {UI_BREAK},
 
     {UI_OK, 0, 1, 1, -1, 0, 0, {.label = {NULL, _STR_OK}}},
@@ -912,6 +1086,10 @@ struct UIItem diaAbout[] = {
 
     {UI_SPACER},
     {UI_LABEL, 0, 1, 1, -1, 0, 15, {.label = {"kr_ps2 - Maximus32 - misfire - Polo35 - reprep - SP193 - volca", -1}}},
+    {UI_BREAK},
+
+    {UI_SPACER},
+    {UI_LABEL, 0, 1, 1, -1, 0, 15, {.label = {"MiguelQueiroz010 - rodrigoGalvanDev (Bluetooth pads)", -1}}},
     {UI_BREAK},
 
     {UI_SPACER},

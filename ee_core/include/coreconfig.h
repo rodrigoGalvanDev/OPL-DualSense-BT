@@ -5,7 +5,8 @@
 #define CORE_EXIT_PATH_MAX_LEN      (256)
 #define CORE_GAME_MODE_DESC_MAX_LEN (16)
 #define CORE_GAME_ID_MAX_LEN        (16)
-#define CORE_PADEMU_BTKEYS_LEN      (180)
+#define CORE_PADEMU_BTKEYS_LEN      (192)
+#define CORE_PADEMU_SETUP_LEN       (40) // PADSETUP_ARG_LEN (include/padsetup.h)
 
 // Do not use "EE" as it might catch a string.
 #define EE_CORE_MAGIC_0 (0x4D614730)
@@ -71,6 +72,9 @@ struct EECoreConfig_t
 
     // Link keys of pads paired wirelessly, passed to bt_pademu ("BTK" + hex, see include/btkeys.h)
     char PadEmuBtKeys[CORE_PADEMU_BTKEYS_LEN];
+
+    // Controller Setup blob (button remap, PS button, touchpad) for bt_pademu, see include/padsetup.h
+    unsigned char PadEmuSetup[CORE_PADEMU_SETUP_LEN];
 };
 
 #define USE_LOCAL_EECORE_CONFIG struct EECoreConfig_t *config = &g_ee_core_config;
